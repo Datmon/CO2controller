@@ -1,0 +1,316 @@
+#include <avr/eeprom.h>
+#include <LiquidCrystal.h>
+#include <GyverEncoder.h>
+#define CLK 8
+#define DT 7
+#define SW 6
+Encoder enc1(CLK, DT, SW);
+
+#include <DHT.h>
+#define DHTPIN A4
+DHT dht(DHTPIN, DHT11);
+
+#define items 4
+
+#include <Wire.h>
+
+#include <SoftwareSerial.h>
+SoftwareSerial mySerial(10, 9);
+
+byte cmd[9] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
+
+unsigned char response[9];
+
+unsigned long timeSet;
+int encPosition = 0;
+int menuPosition = 0;
+float t;
+float h;
+byte crc;
+int a;
+int b;
+boolean needClear = 0;
+boolean k1state = 0;
+boolean k2state = 0;
+boolean k1Turn = 0;
+boolean k2Turn = 0;
+boolean PPMstate = 0;
+boolean HUMstate = 0;
+int k1value = 0;
+int k2value = 0;
+byte gestPPM = 0;
+byte gestH = 0;
+unsigned int ppm;
+
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
+
+void setup()
+{
+  pinMode(A1, OUTPUT);
+  pinMode(A2, OUTPUT);
+  k1value = eeprom_read_word(0);
+  k2value = eeprom_read_word(2);
+  gestH = eeprom_read_byte(4);
+  gestPPM = eeprom_read_byte(5);
+  enc1.setType(TYPE2);
+  lcd.begin(16, 2);
+  dht.begin();
+  mySerial.begin(9600);
+  /*
+    for (int i = 0; i < 30; i++) {
+    lcd.setCursor(i, 0);
+    lcd.print("Sosi");
+    lcd.setCursor(i, 1);
+    lcd.print("pisos");
+    delay(200);
+    lcd.clear();
+    }
+  */
+}
+
+
+void loop()
+{
+  enc1.tick();
+  if (enc1.isRight()) {
+    encPosition = constrain(encPosition + 1, 0, items);
+    lcd.clear();
+  }
+  if (enc1.isLeft()) {
+    encPosition = constrain(encPosition - 1, 0, items);
+    lcd.clear();
+  }
+  if (enc1.isClick()) {
+    switch (encPosition) {
+      case 0:
+        lcd.setCursor(0, 0);
+        lcd.print(" ");
+        lcd.setCursor(4, 0);
+        lcd.print(">    ");
+        while (!enc1.isClick()) {
+          enc1.tick();
+          if (enc1.isRight()) k1value++;      // если был поворот направо, увеличиваем на 1
+          if (enc1.isLeft()) k1value--;      // если был поворот налево, уменьшаем на 1
+          if (enc1.isRightH()) k1value += 20;   // если было удержание + поворот направо, увеличиваем на 5
+          if (enc1.isLeftH()) k1value -= 20;
+          lcd.setCursor(5, 0);
+          lcd.print(k1value);
+          k1state = 1;
+        }
+        break;
+      case 1:
+        lcd.setCursor(0, 1);
+        lcd.print(" ");
+        lcd.setCursor(4, 1);
+        lcd.print(">    ");
+        while (!enc1.isClick()) {
+          enc1.tick();
+          if (enc1.isRight()) k2value++;      // если был поворот направо, увеличиваем на 1
+          if (enc1.isLeft()) k2value--;      // если был поворот налево, уменьшаем на 1
+          if (enc1.isRightH()) k2value += 20;   // если было удержание + поворот направо, увеличиваем на 5
+          if (enc1.isLeftH()) k2value -= 20;
+          lcd.setCursor(5, 1);
+          lcd.print(k2value);
+          k2state = 1;
+          b = k2value / 1000;
+          if (a > b) {
+            lcd.setCursor(5, 1);
+            lcd.print("    ");
+          }
+          a = b;
+        }
+        break;
+      case 2:
+        lcd.setCursor(0, 0);
+        lcd.print(" ");
+        lcd.setCursor(9, 0);
+        lcd.print(">    ");
+        while (!enc1.isClick()) {
+          enc1.tick();
+          if (enc1.isRight()) gestH++;      // если был поворот направо, увеличиваем на 1
+          if (enc1.isLeft()) gestH--;      // если был поворот налево, уменьшаем на 1
+          if (enc1.isRightH()) gestH += 20;   // если было удержание + поворот направо, увеличиваем на 5
+          if (enc1.isLeftH()) gestH -= 20;
+          lcd.setCursor(10, 0);
+          lcd.print(gestH);
+          lcd.print(" ");
+          HUMstate = 1;
+        }
+        break;
+
+      case 3:
+        lcd.setCursor(0, 1);
+        lcd.print(" ");
+        lcd.setCursor(9, 1);
+        lcd.print(">    ");
+        while (!enc1.isClick()) {
+          enc1.tick();
+          if (enc1.isRight()) gestPPM++;      // если был поворот направо, увеличиваем на 1
+          if (enc1.isLeft()) gestPPM--;      // если был поворот налево, уменьшаем на 1
+          if (enc1.isRightH()) gestPPM += 20;   // если было удержание + поворот направо, увеличиваем на 5
+          if (enc1.isLeftH()) gestPPM -= 20;
+          lcd.setCursor(10, 1);
+          lcd.print(gestPPM);
+          lcd.print(" ");
+          PPMstate = 1;
+        }
+        break;
+    }
+  }
+  if (k1state == 1) {
+    k1state = 0;
+    eeprom_write_word(0, k1value);
+  }
+  if (k2state == 1) {
+    k2state = 0;
+    eeprom_write_word(2, k2value);
+  }
+  if (HUMstate == 1) {
+    HUMstate = 0;
+    eeprom_write_word(4, gestH);
+  }
+  if (PPMstate == 1) {
+    PPMstate = 0;
+    eeprom_write_word(5, gestPPM);
+  }
+
+  switch (encPosition) {
+    case 0:
+      lcd.setCursor(0, 1);
+      lcd.print(" ");
+      lcd.setCursor(0, 0);
+      lcd.print(">");
+      menuPosition = 0;
+      break;
+    case 1:
+      lcd.setCursor(0, 0);
+      lcd.print(" ");
+      lcd.setCursor(0, 1);
+      lcd.print(">");
+      menuPosition = 0;
+      break;
+    case 2:
+      lcd.setCursor(0, 1);
+      lcd.print(" ");
+      lcd.setCursor(0, 0);
+      lcd.print(">");
+      menuPosition = 1;
+      break;
+    case 3:
+      lcd.setCursor(0, 0);
+      lcd.print(" ");
+      lcd.setCursor(0, 1);
+      lcd.print(">");
+      menuPosition = 1;
+      break;
+    case 4:
+      lcd.setCursor(0, 1);
+      lcd.print(" ");
+      lcd.setCursor(0, 0);
+      lcd.print(">");
+      menuPosition = 2;
+      break;
+  }
+  switch (menuPosition) {
+    case 0:
+      lcd.setCursor(1, 0);
+      lcd.print("Hum:");
+      lcd.setCursor(1, 1);
+      lcd.print("CO2:");
+      if (millis() > timeSet) {
+        timeSet = millis() + 10000;
+        mySerial.write(cmd, 9);
+        memset(response, 0, 9);
+        mySerial.readBytes(response, 9);
+        crc = 0;
+        for (int i = 1; i < 8; i++) crc += response[i];
+        crc = 255 - crc;
+        crc++;
+        h = dht.readHumidity(); //Измеряем влажность
+        t = dht.readTemperature(); //Измеряем температуру
+        if (needClear == 1) {
+          needClear = 0;
+          lcd.clear();
+        }
+      }
+
+      if (isnan(h) || isnan(t)) {  // Проверка. Если не удается считать показания, выводится «Ошибка считывания», и программа завершает работу
+        lcd.setCursor(5, 0);
+        lcd.print("error");
+        needClear = 1;
+        return;
+      } else {
+        lcd.setCursor(5, 0);
+        lcd.print((int)h);
+        lcd.setCursor(7, 0);
+        lcd.print("%");
+        lcd.setCursor(9, 0);
+        lcd.print("Tmp:");
+        lcd.print((int)t);
+        lcd.print("C");
+      }
+      if ( !(response[0] == 0xFF && response[1] == 0x86 && response[8] == crc) ) {
+        lcd.setCursor(5, 1);
+        lcd.print("error " + String(crc) + "/" + String(response[8]));
+        needClear = 1;
+      } else {
+        unsigned int responseHigh = (unsigned int) response[2];
+        unsigned int responseLow = (unsigned int) response[3];
+        ppm = (256 * responseHigh) + responseLow;
+
+        b = ppm / 1000;
+        if (a > b) {
+          lcd.setCursor(5, 1);
+          lcd.print("    ");
+        }
+        a = b;
+        lcd.setCursor(5, 1);
+        lcd.print(ppm);
+        lcd.setCursor(10, 1);
+        lcd.print("H");
+        lcd.setCursor(13, 1);
+        lcd.print("C");
+
+      }
+      lcd.setCursor(11, 1);
+      lcd.print(k1Turn);
+      lcd.setCursor(14, 1);
+      lcd.print(k2Turn);
+      break;
+    case 1:
+      lcd.setCursor(1, 0);
+      lcd.print("Hum Hyst:");
+      lcd.print(gestH);
+      lcd.setCursor(1, 1);
+      lcd.print("CO2 Hyst:");
+      lcd.print(gestPPM);
+      break;
+    case 2:
+      lcd.setCursor(1, 0);
+      lcd.print("Days since rest:");
+      lcd.setCursor(1, 1);
+      lcd.print(millis()/86400000);
+      break;
+
+  }
+  if (h < k1value && k1Turn == 0) {
+    k1Turn = 1;
+  } else if (k1Turn == 1 && h - gestH > k1value) {
+    k1Turn = 0;
+  }
+  if ((int)ppm > k2value && k2Turn == 0) {
+    k2Turn = 1;
+  } else if (k2Turn == 1 && (int)ppm + gestPPM < k2value) {
+    k2Turn = 0;
+  }
+  if (k1Turn == 1) {
+    digitalWrite(A2, true);
+  } else {
+    digitalWrite(A2, false);
+  }
+  if (k2Turn == 1) {
+    digitalWrite(A1, true);
+  } else {
+    digitalWrite(A1, false);
+  }
+}
